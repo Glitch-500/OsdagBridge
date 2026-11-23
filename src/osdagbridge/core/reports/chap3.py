@@ -4,7 +4,9 @@
 # =============================================================================
 
 from osdagbridge.core.utils.common import (
+    KEY_BL_IRC_CLASS_SV,
     KEY_CB_LOAD,
+    KEY_LL_ECCENTRICITY,
     KEY_LL_CUSTOM_VEHICLES,
     KEY_LL_FOOTPATH_PRESSURE_MODE,
     KEY_LL_FOOTPATH_PRESSURE_VALUE,
@@ -23,6 +25,8 @@ from osdagbridge.core.utils.common import (
     KEY_SL_DAMPING,
     KEY_SL_DEAD_LOAD_MODE,
     KEY_SL_DEAD_LOAD_VALUE,
+    KEY_SL_FORCE_LONGITUDINAL,
+    KEY_SL_FORCE_TRANSVERSE,
     KEY_SL_HORIZONTAL_COEFF,
     KEY_SL_IMPORTANCE_FACTOR,
     KEY_SL_LIVE_LOAD_MODE,
@@ -55,7 +59,8 @@ from osdagbridge.core.utils.common import (
 
 from osdagbridge.core.reports.report_utils import _tex, _render_value
 
-def ch3_loads(input_dict):
+def ch3_loads(input_dict, output_dict=None):
+    output_dict = output_dict if output_dict is not None else {}
     # Live load vehicle names mapping
     vehicles = []
     if input_dict.get(KEY_LL_IRC_CLASS_A):
@@ -130,15 +135,47 @@ def ch3_loads(input_dict):
     else:
         braking_force_str = "N/A"
 
+    # Vehicles contributing to the braking load: the same vehicles considered for
+    # the live load, except Class SV, which is governed by its own braking opt-in
+    # (KEY_BL_IRC_CLASS_SV) independent of the live-load Class SV selection.
+    brk_vehicles = [
+        vehicle
+        for key, vehicle in (
+            (KEY_LL_IRC_CLASS_A, "Class A"),
+            (KEY_LL_IRC_70R_WHEELED, "Class 70R (Wheeled)"),
+            (KEY_LL_IRC_70R_TRACKED, "Class 70R (Tracked)"),
+            (KEY_LL_IRC_AA_WHEELED, "Class AA (Wheeled)"),
+            (KEY_LL_IRC_AA_TRACKED, "Class AA (Tracked)"),
+            (KEY_BL_IRC_CLASS_SV, "Class SV"),
+            (KEY_LL_IRC_70R_BOGIE, "Class 70R (Bogie)"),
+            (KEY_LL_IRC_CLASS_FATIGUE, "Class Fatigue"),
+        )
+        if output_dict.get(key)
+    ]
+
+    brk_custom = output_dict.get(KEY_LL_CUSTOM_VEHICLES)
+    if brk_custom and isinstance(brk_custom, list):
+        for c in brk_custom:
+            if isinstance(c, dict) and c.get('name'):
+                brk_vehicles.append(c['name'])
+            elif isinstance(c, str):
+                brk_vehicles.append(c)
+
+    brk_vehicles_str = ", ".join(brk_vehicles) if brk_vehicles else "None"
+
+    # Braking load eccentricity from top of deck (IRC 6: 1.2 m above deck surface).
+    _brk_ecc = output_dict.get(KEY_LL_ECCENTRICITY)
+    brk_ecc_str = f"{_brk_ecc} m" if _brk_ecc not in (None, "") else "N/A"
+
     fp_mode  = input_dict.get(KEY_LL_FOOTPATH_PRESSURE_MODE, "")
     fp_value = input_dict.get(KEY_LL_FOOTPATH_PRESSURE_VALUE, "")
     if str(fp_mode).strip().lower() in ("as per irc 6", "as per irc6", "automatic"):
         try:
-            fp_str = f"{IRC6_2017.cl_206_1_footway_load():.3f} kN/m² (IRC 6 Cl. 206.1)"
+            fp_str = f"{IRC6_2017.cl_206_1_footway_load():.3f}" + r" kN/m\textsuperscript{2} (IRC 6 Cl. 206.1)"
         except Exception:
             fp_str = "N/A"
     elif fp_value not in (None, ""):
-        fp_str = f"{fp_value} kN/m²"
+        fp_str = _tex(str(fp_value)) + r" kN/m\textsuperscript{2}"
     else:
         fp_str = "N/A"
 
@@ -161,7 +198,7 @@ def ch3_loads(input_dict):
         except Exception:
             pass
     vz_str = f"{float(vz_val):.2f} m/s" if vz_val not in (None, "") else "N/A"
-    pz_str = f"{float(pz_val):.2f} N/m²" if pz_val not in (None, "") else "N/A"
+    pz_str = (f"{float(pz_val):.2f}" + r" N/m\textsuperscript{2}") if pz_val not in (None, "") else "N/A"
 
     # Table 3.5 — Seismic: prefer stored computed values; fall back to IRC6 cl_218_5_1
     sl_zone_factor = input_dict.get(KEY_SL_ZONE_FACTOR)
@@ -200,23 +237,34 @@ def ch3_loads(input_dict):
     def _sl(v, unit=""):
         return f"{float(v):.4f}{unit}" if v not in (None, "") else "N/A"
 
-    # Table 3.6 — Temperature: compute effective bridge temp range from shade temps
-    tl_temp_min = tl_temp_max = tl_rise = tl_fall = "N/A"
-    try:
-        _tmax = input_dict.get(KEY_TL_HIGHEST_MAX_TEMP) or input_dict.get('shade_temp_max')
-        _tmin = input_dict.get(KEY_TL_LOWEST_MIN_TEMP)  or input_dict.get('shade_temp_min')
-        if _tmax and _tmin:
-            _res    = IRC6_2017.cl_215_2_effective_bridge_temperature(
-                          float(_tmax), float(_tmin), 'metallic', False)
-            _bt_min = _res.get('T_min', 0)
-            _bt_max = _res.get('T_max', 0)
-            _mean   = (_bt_max + _bt_min) / 2.0
-            tl_temp_min = f"{_bt_min:.2f}"
-            tl_temp_max = f"{_bt_max:.2f}"
-            tl_rise     = f"{_bt_max - _mean:.2f}"
-            tl_fall     = f"{_mean - _bt_min:.2f}"
-    except Exception:
-        pass
+    # Table 3.6 rows 3 & 4 — effective bridge temperature range and rise/fall.
+    # Prefer values already present in output_dict (populated by the additional-
+    # inputs UI / design snapshot); otherwise compute the fallback here from the
+    # raw shade temperatures and store the results back into output_dict.
+    if not output_dict.get(KEY_TL_BRIDGE_TEMP_MIN):
+        try:
+            # Raw shade temperatures — same source as rows 1 & 2 above. The
+            # user-entered value may sit in output_dict (design snapshot) or in
+            # input_dict; the weather/location-derived 'shade_temp_*' are added
+            # to input_dict during report build. Try all so the fallback fires.
+            _tmax = (output_dict.get(KEY_TL_HIGHEST_MAX_TEMP)
+                     or input_dict.get(KEY_TL_HIGHEST_MAX_TEMP)
+                     or input_dict.get('shade_temp_max'))
+            _tmin = (output_dict.get(KEY_TL_LOWEST_MIN_TEMP)
+                     or input_dict.get(KEY_TL_LOWEST_MIN_TEMP)
+                     or input_dict.get('shade_temp_min'))
+            if _tmax and _tmin:
+                _res    = IRC6_2017.cl_215_2_effective_bridge_temperature(
+                              float(_tmax), float(_tmin), 'metallic', False)
+                _bt_min = _res.get('T_min', 0)
+                _bt_max = _res.get('T_max', 0)
+                _mean   = (_bt_max + _bt_min) / 2.0
+                output_dict[KEY_TL_BRIDGE_TEMP_MIN] = f"{_bt_min:.2f}"
+                output_dict[KEY_TL_BRIDGE_TEMP_MAX] = f"{_bt_max:.2f}"
+                output_dict[KEY_TL_TEMP_RISE]       = f"{_bt_max - _mean:.2f}"
+                output_dict[KEY_TL_TEMP_FALL]       = f"{_mean - _bt_min:.2f}"
+        except Exception:
+            pass
 
     # --- Table 3.7: Load Combinations (dynamically generated from IRC 6) ---
     _LOAD_LABEL_MAP = {
@@ -309,9 +357,14 @@ This section summarizes all loads applied to the bridge and the load combination
 \hline
 \textnormal{Impact Factor (IRC 6)} & """ + _tex(impact_factor_str) + r""" \\[6pt]
 \hline
-\textnormal{Braking Load (IRC 6)} & """ + _tex(braking_force_str) + r""" \\[6pt]
+\textnormal{Footpath Live Load (if applicable)} & """ + fp_str + r""" \\[6pt]
 \hline
-\textnormal{Footpath Live Load (if applicable)} & """ + (_render_value(input_dict, KEY_LL_FOOTPATH_PRESSURE_VALUE, ' kN/m\\textsuperscript{2}')) + r""" \\[6pt]
+\textnormal{Braking Load (IRC 6):} & \\[6pt]
+\hspace{1em}\textnormal{Vehicles Considered} & """ + _tex(brk_vehicles_str) + r""" \\[6pt]
+\hline
+\hspace{1em}\textnormal{Braking Load Value} & """ + _tex(braking_force_str) + r""" \\[6pt]
+\hline
+\hspace{1em}\textnormal{Eccentricity} & """ + _tex(brk_ecc_str) + r""" \\[6pt]
 \hline
 \end{longtable}
 
@@ -327,15 +380,15 @@ This section summarizes all loads applied to the bridge and the load combination
 \hline
 \textnormal{Average Exposed Height, H (m)} & """ + (_render_value(input_dict, KEY_WL_AVG_EXPOSED_HEIGHT, ' m')) + r""" \\[6pt]
 \hline
-\textnormal{Hourly Mean Wind Speed, Vz} & """ + (_render_value(input_dict, KEY_WL_HOURLY_MEAN_WIND, ' m/s')) + r""" \\[6pt]
+\textnormal{Hourly Mean Wind Speed, Vz} & """ + vz_str + r""" \\[6pt]
 \hline
-\textnormal{Hourly Wind Pressure, Pz} & """ + (_render_value(input_dict, KEY_WL_HOURLY_WIND_PRESSURE, ' N/m\\textsuperscript{2}')) + r""" \\[6pt]
+\textnormal{Hourly Wind Pressure, Pz} & """ + pz_str + r""" \\[6pt]
 \hline
-\textnormal{Transverse Wind Force} & """ + (_render_value(input_dict, KEY_WL_TRANSVERSE_WIND_FORCE, ' kN')) + r""" \\[6pt]
+\textnormal{Transverse Wind Force} & """ + (_render_value(output_dict, KEY_WL_TRANSVERSE_WIND_FORCE, ' kN')) + r""" \\[6pt]
 \hline
-\textnormal{Longitudinal Wind Force} & """ + (_render_value(input_dict, KEY_WL_LONGITUDINAL_WIND_FORCE, ' kN')) + r""" \\[6pt]
+\textnormal{Longitudinal Wind Force} & """ + (_render_value(output_dict, KEY_WL_LONGITUDINAL_WIND_FORCE, ' kN')) + r""" \\[6pt]
 \hline
-\textnormal{Vertical Wind Force} & """ + (_render_value(input_dict, KEY_WL_VERTICAL_WIND_FORCE, ' kN')) + r""" \\[6pt]
+\textnormal{Vertical Wind Force} & """ + (_render_value(output_dict, KEY_WL_VERTICAL_WIND_FORCE, ' kN')) + r""" \\[6pt]
 \hline
 \end{longtable}
 
@@ -359,9 +412,9 @@ This section summarizes all loads applied to the bridge and the load combination
 \hline
 \textnormal{Vertical Seismic Coefficient, Av} & """ + (_render_value(input_dict, KEY_SL_VERTICAL_COEFF)) + r""" \\[6pt]
 \hline
-\textnormal{Horizontal Seismic Force (longitudinal)} & """ + '' + r""" kN \\[6pt]
+\textnormal{Horizontal Seismic Force (longitudinal)} & """ + (_render_value(output_dict, KEY_SL_FORCE_LONGITUDINAL, ' kN')) + r""" \\[6pt]
 \hline
-\textnormal{Horizontal Seismic Force (transverse)} & """ + '' + r""" kN \\[6pt]
+\textnormal{Horizontal Seismic Force (transverse)} & """ + (_render_value(output_dict, KEY_SL_FORCE_TRANSVERSE, ' kN')) + r""" \\[6pt]
 \hline
 \end{longtable}
 
@@ -375,9 +428,9 @@ This section summarizes all loads applied to the bridge and the load combination
 \hline
 \textnormal{Minimum Shade Temperature} & """ + (_render_value(input_dict,'shade_temp_min')) + r""" $^\circ$C \\[6pt]
 \hline
-\textnormal{Effective Bridge Temp. Range} & """ + (_render_value(input_dict, KEY_TL_BRIDGE_TEMP_MIN)) + r""" to """ + (_render_value(input_dict, KEY_TL_BRIDGE_TEMP_MAX)) + r""" $^\circ$C \\[6pt]
+\textnormal{Effective Bridge Temp. Range} & """ + (_render_value(output_dict, KEY_TL_BRIDGE_TEMP_MIN)) + r""" to """ + (_render_value(output_dict, KEY_TL_BRIDGE_TEMP_MAX)) + r""" $^\circ$C \\[6pt]
 \hline
-\textnormal{Temperature Rise / Fall for Design} & +""" + (_render_value(input_dict, KEY_TL_TEMP_RISE)) + r""" $^\circ$C / \textminus{}""" + (_render_value(input_dict, KEY_TL_TEMP_FALL)) + r""" $^\circ$C \\[6pt]
+\textnormal{Temperature Rise / Fall for Design} & +""" + (_render_value(output_dict, KEY_TL_TEMP_RISE)) + r""" $^\circ$C / \textminus{}""" + (_render_value(output_dict, KEY_TL_TEMP_FALL)) + r""" $^\circ$C \\[6pt]
 \hline
 \end{longtable}
 

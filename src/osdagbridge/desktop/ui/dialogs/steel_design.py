@@ -83,7 +83,7 @@ class SteelDesign(QDialog):
         main_layout.setSpacing(0)
 
         self.title_bar = CustomTitleBar()
-        self.title_bar.setTitle("Girder Analysis and Design Results Summary")
+        self.title_bar.setTitle("Girder Analysis and Design Summary")
         main_layout.addWidget(self.title_bar)
 
         self.content_widget = QWidget(self)
@@ -152,8 +152,9 @@ class SteelDesign(QDialog):
 
         backend = getattr(self._main_window, "backend", None)
         if backend is not None and backend.output_dict:
-            # All values come straight from the backend's output_dict.
-            self.details_tab.load_data(dict(backend.output_dict))
+            # All values come straight from the backend's output_dict, for the
+            # girder currently chosen in the selection bar.
+            self._reload_details_tab()
 
         if self._result_handler is not None:
             # Inject the matplotlib canvas into the Analysis Results tab
@@ -496,6 +497,7 @@ class SteelDesign(QDialog):
         # NOTE: member_combo and load_combo are now fully interactive
         self.member_combo.currentIndexChanged.connect(self._update_analysis_plots)
         self.member_combo.currentIndexChanged.connect(self._on_selection_changed_maybe_refresh_checks)
+        self.member_combo.currentIndexChanged.connect(self._reload_details_tab)
         self.load_combo.currentIndexChanged.connect(self._on_load_combo_changed)
         self.load_combo.currentIndexChanged.connect(self._on_selection_changed_maybe_refresh_checks)
         if hasattr(self.analysis_tab, "component_combo"):
@@ -538,7 +540,18 @@ class SteelDesign(QDialog):
             # so results are visible without switching tabs first.
             self._run_design_checks()
 
+    def _reload_details_tab(self, *args):
+        """Repopulate the Details tab for the girder chosen in the selection bar.
 
+        member_combo lists only the interior (main) girders in physical order, so
+        its 0-based index is exactly the girder_index the per-girder ".G{n}.M1"
+        output keys expect. Reads solely from the backend's output_dict.
+        """
+        backend = getattr(self._main_window, "backend", None)
+        if backend is None or not backend.output_dict:
+            return
+        girder_index = max(0, self.member_combo.currentIndex())
+        self.details_tab.load_data(dict(backend.output_dict), girder_index)
 
     def _on_tab_changed(self, index):
         """
@@ -592,8 +605,12 @@ class SteelDesign(QDialog):
             if backend is None:
                 return
 
-            # Resolve current selection from the dialog's own dropdowns
-            girder_key = self.member_combo.currentData() or self.member_combo.currentText()
+            # Resolve current selection from the dialog's own dropdowns.
+            # member_combo lists only the interior girders in physical order, so its
+            # 0-based index gives the canonical G1..Gn key design_results["per_girder"]
+            # is stored under. currentData() holds the raw analysis-model key instead
+            # (needed by the plots at _update_analysis_plots) and must not be used here.
+            girder_key = f"G{max(0, self.member_combo.currentIndex()) + 1}"
             load_case  = self.load_combo.currentText()
 
             if not girder_key or not load_case or load_case.startswith(_COMBO_HEADER_PREFIX):

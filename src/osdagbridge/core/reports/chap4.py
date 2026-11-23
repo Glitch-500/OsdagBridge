@@ -2,15 +2,15 @@ from typing import TYPE_CHECKING
 from osdagbridge.core.utils.common import (
     KEY_SPAN,
     KEY_TS_NO_OF_GIRDERS,
-    KEY_SD_DEFL_LIVE,
-    KEY_SD_DEFL_TOTAL,
+    KEY_SD_DEFL_LIVE_RAW,
+    KEY_SD_DEFL_TOTAL_RAW,
 )
 from osdagbridge.core.reports.report_utils import _tex, _fig_embed
 
 if TYPE_CHECKING:
     from .report_generator import ReportDataBridge
 
-def ch4_analysis(asum, fig_paths, bridge: "ReportDataBridge", span_m: float):
+def ch4_analysis(asum, fig_paths, bridge: "ReportDataBridge"):
     lc_summary  = (asum or {}).get('load_cases', {})
     rxn_summary = (asum or {}).get('reactions',  {})
 
@@ -62,8 +62,10 @@ def ch4_analysis(asum, fig_paths, bridge: "ReportDataBridge", span_m: float):
     _live_mm  = None
     _total_mm = None
     for _gi in range(1, n + 1):
-        _l = bridge.output_dict.get(f"{KEY_SD_DEFL_LIVE}.G{_gi}")
-        _t = bridge.output_dict.get(f"{KEY_SD_DEFL_TOTAL}.G{_gi}")
+        # RAW (pre-camber) — this is the Analysis Results chapter, so it must report what
+        # the analysis produced and match the deflection plots below.
+        _l = bridge.output_dict.get(f"{KEY_SD_DEFL_LIVE_RAW}.G{_gi}")
+        _t = bridge.output_dict.get(f"{KEY_SD_DEFL_TOTAL_RAW}.G{_gi}")
         if _l is not None:
             _live_mm  = max(_live_mm, float(_l))  if _live_mm  is not None else float(_l)
         if _t is not None:
@@ -75,6 +77,15 @@ def ch4_analysis(asum, fig_paths, bridge: "ReportDataBridge", span_m: float):
     _allow_total_str = f"L/600 = {_allow_total_mm:.1f} mm"
     _live_status     = ("PASS" if _live_mm  <= _allow_live_mm  else r"\textcolor{red}{FAIL}") if _live_mm  is not None else "---"
     _total_status    = ("PASS" if _total_mm <= _allow_total_mm else r"\textcolor{red}{FAIL}") if _total_mm is not None else "---"
+
+    # Table 4.2 rows — reactions per load case, taken straight from rxn_summary.
+    rxn_body = ("\n\\hline\n").join(
+        _tex(lc) + r" & "
+        + _tex((rxn_summary.get(lc) or {}).get('left_kN', '')) + r" & "
+        + _tex((rxn_summary.get(lc) or {}).get('right_kN', '')) + r" \\[6pt]"
+        for lc in rxn_summary
+    )
+
     return r"""
 \chapter{Analysis Results}
 
@@ -146,11 +157,7 @@ A grillage model was used for structural analysis. The deck is idealized as a gr
 \hline
 \textbf{Load Case} & \textbf{Left Support (kN)} & \textbf{Right Support (kN)} \\[6pt]
 \hline
- & """ + '' + r""" & """ + '' + r""" \\[6pt]
-\hline
- & """ + '' + r""" & """ + '' + r""" \\[6pt]
-\hline
- & """ + '' + r""" & """ + '' + r""" \\[6pt]
+""" + rxn_body + r"""
 \hline
 \end{longtable}
 

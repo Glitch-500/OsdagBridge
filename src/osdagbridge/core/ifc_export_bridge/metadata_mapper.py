@@ -277,3 +277,58 @@ class BridgeMetadataMapper:
             
         if props:
             self.assign_metadata(element, props)
+
+    def map_material(self, element, material_name):
+        if not material_name:
+            return
+        mat = self.file.createIfcMaterial(str(material_name))
+        owner_history = getattr(self.mapper, '_owner_history', None)
+        self.file.createIfcRelAssociatesMaterial(
+            create_ifc_guid(),
+            owner_history,
+            None,
+            None,
+            [element],
+            mat
+        )
+
+    def map_quantities(self, element, qto_name, quantities: dict):
+        quantities_list = []
+        for name, val in quantities.items():
+            if val is None:
+                continue
+            q_type, q_val = val if isinstance(val, tuple) else ("Length", val)
+            if q_type == "Length":
+                q = self.file.createIfcQuantityLength(name, None, None, float(q_val))
+            elif q_type == "Area":
+                q = self.file.createIfcQuantityArea(name, None, None, float(q_val))
+            elif q_type == "Volume":
+                q = self.file.createIfcQuantityVolume(name, None, None, float(q_val))
+            elif q_type == "Weight":
+                q = self.file.createIfcQuantityWeight(name, None, None, float(q_val))
+            elif q_type == "Count":
+                q = self.file.createIfcQuantityCount(name, None, None, int(q_val))
+            else:
+                q = self.file.createIfcQuantityLength(name, None, None, float(q_val))
+            quantities_list.append(q)
+
+        if not quantities_list:
+            return
+
+        owner_history = getattr(self.mapper, '_owner_history', None)
+        eq = self.file.createIfcElementQuantity(
+            create_ifc_guid(),
+            owner_history,
+            Name=qto_name,
+            Description=None,
+            MethodOfMeasurement=None,
+            Quantities=quantities_list,
+        )
+        self.file.createIfcRelDefinesByProperties(
+            create_ifc_guid(),
+            owner_history,
+            None,
+            None,
+            [element],
+            eq,
+        )

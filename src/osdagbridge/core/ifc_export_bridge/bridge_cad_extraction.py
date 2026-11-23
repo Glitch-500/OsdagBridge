@@ -29,16 +29,43 @@ from osdagbridge.core.bridge_components.super_structure.deck.builder import (
 from osdagbridge.core.utils.common import (
     DEFAULT_GIRDER_SPACING
 )
-from osdagbridge.core.bridge_components.super_structure.crash_barrier.builder import (
-    calculate_carriageway_offset
-)
-from osdagbridge.core.bridge_components.super_structure.plate_girder.builder import (
-    END_STIFFENER_SPACING
-)
+try:
+    from osdagbridge.core.bridge_components.super_structure.crash_barrier.builder import (
+        calculate_carriageway_offset
+    )
+except (ImportError, ModuleNotFoundError):
+    def calculate_carriageway_offset(footpath_config, footpath_width, railing_width):
+        if footpath_config in ("NONE", "BOTH"):
+            return 0.0
+        elif footpath_config == "LEFT":
+            return (footpath_width + railing_width) / 2.0
+        elif footpath_config == "RIGHT":
+            return -(footpath_width + railing_width) / 2.0
+        raise ValueError(f"Invalid footpath_config: {footpath_config}")
+
+try:
+    from osdagbridge.core.bridge_components.super_structure.plate_girder.builder import (
+        END_STIFFENER_SPACING
+    )
+except (ImportError, ModuleNotFoundError):
+    END_STIFFENER_SPACING = 50.0
 from osdagbridge.desktop.cad.irc5_geometry import (
     CrashBarrierGeometry,
     MedianGeometry,
     RailingGeometry
+)
+
+from osdagbridge.core.bridge_components.sub_structure.placement import (
+    calculate_substructure_placement
+)
+from osdagbridge.core.bridge_components.sub_structure.pier.builder import (
+    build_pier_rebar
+)
+from osdagbridge.core.bridge_components.sub_structure.pier_cap.builder import (
+    build_pier_cap_rebar
+)
+from osdagbridge.core.bridge_components.foundation.pile_cap.builder import (
+    build_pile_cap_rebar
 )
 
 class ExtractedObject:
@@ -125,7 +152,8 @@ class PlateGirderIFCExtractor:
             "cross_bracings": self._extract_cross_bracings(n_girders, spacing),
             "deck_slab": self._extract_deck_slab(total_width),
             "crash_barriers": self._extract_safety_components(total_width, actual_base_width, actual_railing_width),
-            "supports": self._extract_supports(n_girders, spacing)
+            "supports": self._extract_supports(n_girders, spacing),
+            "substructure": self._extract_substructure(total_width),
         }
 
     def _solve_girder_layout(self, total_width):
@@ -492,3 +520,182 @@ class PlateGirderIFCExtractor:
                 uDir=[0,1,0], wDir=[0,0,1], ifc_name=f"Cylindrical Support {i+1}"))
                 
         return {"supports_tri": [s for s in supports if s._class_name == "StiffenerPlate"], "supports_cyl": [s for s in supports if s._class_name == "CircularSolid"]}
+
+    def _extract_substructure(self, total_deck_width):
+        L = getattr(self.cad, "span_length_L", 25000.0)
+        d = getattr(self.cad, "girder_section_d", 900.0)
+        tf_b = getattr(self.cad, "girder_section_tf_b", 260.0)
+
+        pos = calculate_substructure_placement(
+            span_length_L=L,
+            girder_section_d=d,
+            girder_section_tf_b=tf_b,
+        )
+
+        concrete_grade = getattr(self.cad, "concrete_grade", "M30")
+        rebar_grade = getattr(self.cad, "rebar_grade", "Fe500")
+
+        cap_len = total_deck_width
+        cap_obj = ExtractedObject(
+            "PierCap",
+            ifc_name="Pier Cap",
+            origin=[pos["pier_cap"]["x"], pos["pier_cap"]["y"] - cap_len / 2.0, pos["pier_cap"]["z_bot"]],
+            uDir=[0, 1, 0],
+            wDir=[1, 0, 0],
+            length=cap_len,
+            top_width=3000.0,
+            bottom_width=1200.0,
+            depth=600.0,
+            profile_points=[
+                (-1200.0 / 2.0, 0.0),
+                (1200.0 / 2.0, 0.0),
+                (3000.0 / 2.0, 600.0),
+                (-3000.0 / 2.0, 600.0),
+            ],
+            concrete_grade=concrete_grade,
+        )
+
+        pier_obj = ExtractedObject(
+            "Pier",
+            ifc_name="Pier",
+            origin=[pos["pier"]["x"], pos["pier"]["y"], pos["pier"]["z_bot"]],
+            uDir=[0, 0, 1],
+            wDir=[1, 0, 0],
+            radius=400.0,
+            height=3000.0,
+            concrete_grade=concrete_grade,
+        )
+
+        pile_cap_obj = ExtractedObject(
+            "PileCap",
+            ifc_name="Pile Cap",
+            origin=[pos["pile_cap"]["x"], pos["pile_cap"]["y"], pos["pile_cap"]["z_bot"]],
+            uDir=[0, 0, 1],
+            wDir=[1, 0, 0],
+            length_x=2200.0,
+            width_y=1200.0,
+            depth_z=600.0,
+            concrete_grade=concrete_grade,
+        )
+
+        piles_objs = []
+        for p in pos["piles"]:
+            piles_objs.append(
+                ExtractedObject(
+                    "Pile",
+                    ifc_name=f"Pile {p['index'] + 1}",
+                    origin=[p["x"], p["y"], p["z_bot"]],
+                    uDir=[0, 0, 1],
+                    wDir=[1, 0, 0],
+                    radius=200.0,
+                    length=5000.0,
+                    concrete_grade=concrete_grade,
+                )
+            )
+
+        rebar_objs = []
+        pier_reb = build_pier_rebar(
+            diameter=800.0,
+            height=3000.0,
+            center_x=pos["pier"]["x"],
+            center_y=pos["pier"]["y"],
+            bottom_z=pos["pier"]["z_bot"],
+        )
+        for idx, bar in enumerate(pier_reb["main_bars"]):
+            rebar_objs.append(
+                ExtractedObject(
+                    "RebarStraight",
+                    ifc_name=f"Pier Main Bar {idx + 1}",
+                    p1=bar["p1"],
+                    p2=bar["p2"],
+                    diameter=bar["diameter"],
+                    length=bar["length"],
+                    role="MAIN",
+                    rebar_grade=rebar_grade,
+                )
+            )
+        for idx, tie in enumerate(pier_reb["ties"]):
+            rebar_objs.append(
+                ExtractedObject(
+                    "RebarHoop",
+                    ifc_name=f"Pier Tie {idx + 1}",
+                    center=tie["center"],
+                    radius=tie["radius"],
+                    diameter=tie["diameter"],
+                    length=tie["length"],
+                    role="LIGATURE",
+                    rebar_grade=rebar_grade,
+                )
+            )
+
+        cap_reb = build_pier_cap_rebar(
+            length=total_deck_width,
+            center_x=pos["pier_cap"]["x"],
+            center_y=pos["pier_cap"]["y"],
+            bottom_z=pos["pier_cap"]["z_bot"],
+        )
+        for idx, bar in enumerate(cap_reb["main_bars"]):
+            rebar_objs.append(
+                ExtractedObject(
+                    "RebarStraight",
+                    ifc_name=f"Pier Cap Main Bar {idx + 1}",
+                    p1=bar["p1"],
+                    p2=bar["p2"],
+                    diameter=bar["diameter"],
+                    length=bar["length"],
+                    role="MAIN",
+                    rebar_grade=rebar_grade,
+                )
+            )
+        for idx, st in enumerate(cap_reb["ties"]):
+            rebar_objs.append(
+                ExtractedObject(
+                    "RebarStirrup",
+                    ifc_name=f"Pier Cap Stirrup {idx + 1}",
+                    points=st["points"],
+                    diameter=st["diameter"],
+                    length=st["length"],
+                    role="LIGATURE",
+                    rebar_grade=rebar_grade,
+                )
+            )
+
+        pc_reb = build_pile_cap_rebar(
+            center_x=pos["pile_cap"]["x"],
+            center_y=pos["pile_cap"]["y"],
+            bottom_z=pos["pile_cap"]["z_bot"],
+        )
+        for idx, bar in enumerate(pc_reb["main_bars"]):
+            rebar_objs.append(
+                ExtractedObject(
+                    "RebarStraight",
+                    ifc_name=f"Pile Cap Main Bar {idx + 1}",
+                    p1=bar["p1"],
+                    p2=bar["p2"],
+                    diameter=bar["diameter"],
+                    length=bar["length"],
+                    role="MAIN",
+                    rebar_grade=rebar_grade,
+                )
+            )
+        for idx, st in enumerate(pc_reb["ties"]):
+            rebar_objs.append(
+                ExtractedObject(
+                    "RebarStirrup",
+                    ifc_name=f"Pile Cap Stirrup {idx + 1}",
+                    points=st["points"],
+                    diameter=st["diameter"],
+                    length=st["length"],
+                    role="LIGATURE",
+                    rebar_grade=rebar_grade,
+                )
+            )
+
+        return {
+            "pier_cap": cap_obj,
+            "pier": pier_obj,
+            "pile_cap": pile_cap_obj,
+            "piles": piles_objs,
+            "rebar": rebar_objs,
+            "placement": pos,
+        }

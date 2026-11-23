@@ -467,6 +467,50 @@ class CAD3DWindow(QWidget):
             BARRIER_COLOR
         )
 
+        SUBSTRUCTURE_COLOR = Quantity_Color(150/255.0, 150/255.0, 150/255.0, Quantity_TOC_RGB)
+
+        display_and_register(
+            cad_data.get("pier_cap", []),
+            "Pier Cap",
+            "Pier Cap\nTop: 3000 mm\nBottom: 1200 mm\nDepth: 600 mm",
+            SUBSTRUCTURE_COLOR,
+            transparency=0.65
+        )
+
+        display_and_register(
+            cad_data.get("pier", []),
+            "Pier",
+            "Pier\nDiameter: 800 mm\nHeight: 3000 mm",
+            SUBSTRUCTURE_COLOR,
+            transparency=0.65
+        )
+
+        display_and_register(
+            cad_data.get("pile_cap", []),
+            "Pile Cap",
+            "Pile Cap\n2200 x 1200 x 600 mm",
+            SUBSTRUCTURE_COLOR,
+            transparency=0.65
+        )
+
+        display_and_register(
+            cad_data.get("piles", []),
+            "Piles",
+            "Piles (4 Nos)\nDiameter: 400 mm\nLength: 5000 mm",
+            SUBSTRUCTURE_COLOR,
+            transparency=0.65
+        )
+
+        REBAR_COLOR = Quantity_Color(45/255.0, 45/255.0, 45/255.0, Quantity_TOC_RGB)
+
+        display_and_register(
+            cad_data.get("substructure_rebar", []),
+            "Substructure Rebar",
+            "Substructure Rebar\nMain: dia 16 @ 150 mm\nTies: dia 8 @ 200 mm\nCover: 40 mm",
+            REBAR_COLOR,
+            transparency=0.0
+        )
+
         # Nodes and grillage overlays
         node_positions = self._render_nodes()
         self._render_grillage(node_positions)
@@ -618,7 +662,7 @@ class CAD3DWindow(QWidget):
             _log.warning("capture_for_report: display not ready — skipped")
             return {}
 
-        ALL         = ['Girder', 'Deck', 'Cross Bracing', 'Crash Barrier', 'Median', 'Railing']
+        ALL         = ['Girder', 'Deck', 'Cross Bracing', 'Crash Barrier', 'Median', 'Railing', 'Pier Cap', 'Pier', 'Pile Cap', 'Piles', 'Substructure Rebar']
         GIRDER_ONLY = ['Girder']
         GIRDER_DECK = ['Girder', 'Deck']
 
@@ -716,6 +760,11 @@ class CAD3DWindow(QWidget):
             "Crash Barrier": ["Crash Barrier", "Crash Barrier W-Beam"],
             "Median":        ["Median", "Median W-Beam"],
             "Railing":       ["Railing"],
+            "Pier Cap":      ["Pier Cap"],
+            "Pier":          ["Pier"],
+            "Pile Cap":      ["Pile Cap"],
+            "Piles":         ["Piles"],
+            "Substructure Rebar": ["Substructure Rebar"],
             "Grillage":      ["Grillage"],
             "Node":          ["Node"],
         }
@@ -1209,6 +1258,11 @@ class BridgeComponentCheckbox(QWidget):
         ("Crash Barrier", "Crash Barrier"),
         ("Median",        "Median"),
         ("Railing",       "Railing"),
+        ("Pier Cap",      "Pier Cap"),
+        ("Pier",          "Pier"),
+        ("Pile Cap",      "Pile Cap"),
+        ("Piles",         "Piles"),
+        ("Substructure Rebar", "Substructure Rebar"),
         ("Grillage view", "Grillage"),
         ("Node",          "Node"),
         ("Node Numbers",  "NodeNumbers"),

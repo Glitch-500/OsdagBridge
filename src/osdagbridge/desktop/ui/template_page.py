@@ -452,10 +452,7 @@ class CustomWindow(QWidget):
         This updates the 2D CAD using cad state of Typical section cad
         """
         if self._additional_inputs_dialog is not None:
-
-            # This is updated directly because 
-            # there is some mapping that takes place in BridgeDualCADWidget which can worst the things
-            self.cad_comp_widget.cross_section_widget.update_params(cad_state)
+            self.cad_comp_widget.update_from_osdag_inputs(self.input_dict)
 
     def _show_additional_inputs(self, target_tab: str | None = None):
         """
@@ -485,7 +482,6 @@ class CustomWindow(QWidget):
         if self.input_dock:
             print(f"\n@@ Syncing design mode to Additional Inputs: {self.input_dock._current_design_mode}")
             dlg.design_mode_trigger(self.input_dock._current_design_mode)
-
 
         dlg.show()
         dlg.raise_()
@@ -605,6 +601,28 @@ class CustomWindow(QWidget):
             if hasattr(self, 'input_dock') and self.input_dock is not None:
                 self.input_dock.setEnabled(True)
 
+    def _sync_refresh_entries_to_input_dict(self) -> None:
+        """
+        Runs all collected tab refresh entries
+        Collected via UIBuilder to additional_inputs._refresh_entries list
+        Help to sync refreshed values into input_dict before Design
+        """
+        if self._additional_inputs_dialog is None:
+            return
+
+        for entry in self._additional_inputs_dialog._refresh_entries:
+            widget_id = entry.get("widget_id")
+            path      = entry.get("path", [])
+            val = self.input_dict
+            for key in path:
+                val = val.get(key) if isinstance(val, dict) else None
+                if val is None:
+                    break
+            if val is None:
+                continue
+            # print(f"\n@@refresh_entry:{widget_id} value:\n{val}")
+            self.input_dict[widget_id] = val
+
     def _sync_compute_results_to_input_dict(self) -> None:
         """
         Runs all collected on_change_compute functions
@@ -620,7 +638,7 @@ class CustomWindow(QWidget):
             if fn is None:
                 continue
             result = fn(self.input_dict)
-            print(f"\n@@compute_function:{func} result:\n{result}")
+            # print(f"\n@@compute_function:{func} result:\n{result}")
             if isinstance(result, dict):
                 self.input_dict.update(result)
 
@@ -634,8 +652,8 @@ class CustomWindow(QWidget):
         # print(f"[DEBUG]c/s:{self.cross_section_active}")
         from pprint import pprint
         self.input_dock._prime_material_inputs()
-        print("\n@@input_dictionary_before (common_design_func):\n")
-        pprint(self.input_dict)
+        # print("\n@@input_dictionary_before (common_design_func):\n")
+        # pprint(self.input_dict)
 
         # Check required fields
         required_widget_validated = self.validate_required_inputs()
@@ -650,11 +668,14 @@ class CustomWindow(QWidget):
 
         print("\n@@input_dictionary_after (common_design_func):\n")
         pprint(self.input_dict)
-
-        # Update Computed Values in input_dict before Design
-        self._sync_compute_results_to_input_dict()
-
+        
         if trigger == "Design":
+
+            # Update Computed Values in input_dict before Design
+            self._sync_compute_results_to_input_dict()
+            # read a refresh-synced key (KEY_WL_BASIC_WIND_SPEED) as their input.
+            self._sync_refresh_entries_to_input_dict()
+
             import sys
             import traceback
 
@@ -1365,7 +1386,7 @@ class CustomWindow(QWidget):
                                 self._cad_gen,
                                 is_preview=self._is_preview,
                             )
-                        print(f"[REPORT-DEBUG] generate_design_report returned: {type(result).__name__}")
+                        print(f"[REPORT-DEBUG] generate_design_report returned: {result}\n\n{type(result).__name__}")
                     except Exception as exc:
                         import traceback as _tb
                         print(f"[REPORT-DEBUG] EXCEPTION in worker: {exc}")

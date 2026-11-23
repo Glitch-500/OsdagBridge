@@ -62,6 +62,8 @@ from osdagbridge.core.utils.common import (
     KEY_DS_TOP_CLEAR_COVER,
     KEY_MATERIAL_DECK_FCK,
     KEY_MATERIAL_DECK_FCTM,
+    KEY_MATERIAL_GIRDER_E,
+    KEY_MATERIAL_GIRDER_G,
     KEY_MP_ED_TYPE,
     KEY_SD_BOTTOM_FLANGE_THICKNESS,
     KEY_SD_BOTTOM_FLANGE_WIDTH,
@@ -76,6 +78,11 @@ from osdagbridge.core.utils.common import (
     KEY_SD_DEFL_LIVE,
     KEY_SD_DEFL_TOTAL,
     KEY_SD_EFFECTIVE_SLAB_WIDTH,
+    KEY_SD_FATIGUE_FFD_MPA,
+    KEY_SD_FATIGUE_FF_MPA,
+    KEY_DO_GAMMA_MF,
+    KEY_SD_FATIGUE_MU_R,
+    KEY_SD_FATIGUE_STRESS_RANGE_MPA,
     KEY_SD_FLANGE_CLASS_LIMIT,
     KEY_SD_FLANGE_SLENDERNESS,
     KEY_SD_HIGH_SHEAR,
@@ -85,8 +92,10 @@ from osdagbridge.core.utils.common import (
     KEY_SD_IS_IYS_PROV,
     KEY_SD_LTB_CHI,
     KEY_SD_LTB_LAMBDA,
+    KEY_SD_LTB_LLT,
     KEY_SD_LTB_MB,
     KEY_SD_LTB_MCR,
+    KEY_SD_LTB_MP,
     KEY_SD_MDV,
     KEY_SD_MD_CAPACITY,
     KEY_SD_MN_AXIAL,
@@ -103,8 +112,18 @@ from osdagbridge.core.utils.common import (
     KEY_SD_SC_SL1,
     KEY_SD_SC_SL2,
     KEY_SD_SC_SR,
+    KEY_SD_SC_AEC_MM2,
+    KEY_SD_SC_VR_PER_MM,
+    KEY_SD_SC_H1_kN,
+    KEY_SD_SC_H2_kN,
+    KEY_SD_SC_SHEAR_SPAN,
+    KEY_SD_SC_H_kN,
+    KEY_SD_SC_Vr_kN,
     KEY_SD_SECTION_CLASS,
     KEY_SD_SECTION_PROP_AREA,
+    KEY_SD_SECTION_PROP_IT,
+    KEY_SD_SECTION_PROP_IV,
+    KEY_SD_SECTION_PROP_IW,
     KEY_SD_SECTION_PROP_IZ,
     KEY_SD_SECTION_PROP_ZUZ,
     KEY_SD_SECTION_PROP_ZZ,
@@ -127,6 +146,8 @@ from osdagbridge.core.utils.common import (
     KEY_SD_TOTAL_DEPTH,
     KEY_SD_TS_VL,
     KEY_SD_TS_VRD,
+    KEY_SD_TS_AEC,
+    KEY_SD_TS_Y,
     KEY_SD_ULS_PER_GIRDER,
     KEY_SD_WEB_CLASS_LIMIT,
     KEY_SD_WEB_SLENDERNESS,
@@ -315,16 +336,41 @@ def ch5_design_checks(checks_data, bridge) -> str:
     except (TypeError, ValueError):
         _ltb_ur_str = ""
         _ltb_status = "---"
+
+    def _render_scaled(source_dict, key, scale, nd, unit=""):
+        v = source_dict.get(key)
+        if v in ("", None):
+            return ""
+        return f"{float(v) * scale:.{nd}f}" + unit
+
+    _iy_cm4_str = _render_scaled(bridge.output_dict, KEY_SD_SECTION_PROP_IV, 1e8, 1, " cm$^4$")
+    _it_cm4_str = _render_scaled(bridge.output_dict, KEY_SD_SECTION_PROP_IT, 1e8, 1, " cm$^4$")
+    _iw_cm6_str = _render_scaled(bridge.output_dict, KEY_SD_SECTION_PROP_IW, 1e12, 3, " cm$^6$")
+    _g_mpa_str  = _render_scaled(bridge.input_dict,  KEY_MATERIAL_GIRDER_G, 1000.0, 1, " MPa")
+    _e_mpa_str  = _render_scaled(bridge.input_dict,  KEY_MATERIAL_GIRDER_E, 1000.0, 1, " MPa, ")
+
     t56_rows = []
     for lbl, _ in girder_entries:
         t56_rows.append(
-            r"\multirow{5}{*}{\makecell{" + lbl + r"""}} & Elastic Critical Moment, $M_{cr}$ & IRC 22 Cl. 603.3.3.1 & """ + _render_value(bridge.output_dict, KEY_SD_LTB_MCR, " kN-m") + r""" & --- \\[6pt]
+            r"\multirow{11}{*}{\makecell{" + lbl + r"""}} & Effective Unbraced Length, $L_{LT}$ & $\min(s_{cb},\,L_{span})$ & """ + _render_value(bridge.output_dict, KEY_SD_LTB_LLT, " m") + r""" & --- \\[6pt]
+\cline{2-5}
+ & Minor-axis M.I., $I_y$ & $\sum t\,b^3/12$ & """ + _iy_cm4_str + r""" & --- \\[6pt]
+\cline{2-5}
+ & Torsional Constant, $J$ & $\sum b\,t^3/3$ & """ + _it_cm4_str + r""" & --- \\[6pt]
+\cline{2-5}
+ & Warping Constant, $I_w$ & $\dfrac{I_{y,tf}\,I_{y,bf}}{I_{y,tf}+I_{y,bf}}\,h_w^2$ & """ + _iw_cm6_str + r""" & --- \\[6pt]
+\cline{2-5}
+ & Elastic / Shear Modulus, $E$, $G$ & Material constants & """ + _e_mpa_str + _g_mpa_str + r""" & --- \\[6pt]
+\cline{2-5}
+ & Design Bending Strength, $M_p$ & IS 800 Cl. 8.2.1.2 & """ + _render_value(bridge.output_dict, KEY_SD_LTB_MP, " kN-m") + r""" & --- \\[6pt]
+\cline{2-5}
+ & Elastic Critical Moment, $M_{cr}$ & IRC 22 Cl. 603.3.3.1 & """ + _render_value(bridge.output_dict, KEY_SD_LTB_MCR, " kN-m") + r""" & --- \\[6pt]
 \cline{2-5}
  & Non-dim. Slenderness, $\bar{\lambda}_{LT}$ & $\sqrt{M_p / M_{cr}}$ & """ + _render_value(bridge.output_dict, KEY_SD_LTB_LAMBDA) + r""" & --- \\[6pt]
 \cline{2-5}
  & LTB Reduction Factor, $\chi_{LT}$ & IS 800 Cl. 8.2.2 & """ + _render_value(bridge.output_dict, KEY_SD_LTB_CHI) + r""" & --- \\[6pt]
 \cline{2-5}
- & LTB Resistance, $M_b$ & $\chi_{LT}\,M_p / \gamma_{m0}$ & """ + _render_value(bridge.output_dict, KEY_SD_LTB_MB, " kN-m") + r""" & --- \\[6pt]
+ & LTB Resistance, $M_b$ & $\chi_{LT}\,M_p$ & """ + _render_value(bridge.output_dict, KEY_SD_LTB_MB, " kN-m") + r""" & --- \\[6pt]
 \cline{2-5}
  & $M_u \leq M_b$ & $M_u / M_b$ & """ + _ltb_ur_str + r""" & """ + _ltb_status + r""" \\[6pt]
 \hline"""
@@ -335,7 +381,7 @@ def ch5_design_checks(checks_data, bridge) -> str:
     t57_rows = []
     for lbl, _ in girder_entries:
         t57_rows.append(
-            r"\multirow{6}{*}{\makecell{" + lbl + r"""}} & \textnormal{Shear Buckling Design Method} & """ + _render_value(bridge.output_dict, KEY_SD_STIFF_METHOD) + r""" \\[6pt]
+            r"\multirow{6}{*}{\makecell{" + lbl + r"""}} & \textnormal{Shear Buckling Design Method} & """ + str(_render_value(bridge.output_dict, KEY_SD_STIFF_METHOD)).replace("_", " ").title() + r""" \\[6pt]
 \cline{2-3}
  & \textnormal{Intermediate Stiffener Thickness (mm)} & """ + _render_value(bridge.output_dict, KEY_SD_STIFF_INT_THICK) + r""" \\[6pt]
 \cline{2-3}
@@ -496,7 +542,7 @@ def ch5_design_checks(checks_data, bridge) -> str:
         except (TypeError, ValueError):
             return "---"
 
-    _dr_511        = bridge.output_dict.get("design_results", {}) or {}
+    _dr_511        = bridge.output_dict.get("design_results", {})
     _steel_sigma   = _dr_511.get(KEY_SD_STRESS_STEEL)
     _steel_allow   = _dr_511.get(KEY_SD_STRESS_STEEL_ALLOWABLE)
     _steel_sig_str = _mpa(_steel_sigma)
@@ -513,6 +559,67 @@ def ch5_design_checks(checks_data, bridge) -> str:
 \hline"""
         )
     t511_content = "\n".join(t511_rows)
+
+    # Supporting calculation for Table 5.11 — the "Actual Stress" above is NOT
+    # a plain Md/Z bending stress; it is the Cl.604.3.1 equivalent stress
+    # fe = sqrt(fbc^2 + 3*tau_b^2) on the short-term composite section under
+    # the SLS envelope moment. Expose that breakdown so the reported value can
+    # be independently recomputed. Source: the controlling girder's own
+    # sls_fibre_stresses dict (design_results["per_girder"][controlling_girder]
+    # ["sls_fibre_stresses"]), already written by compute_sls_stresses() in
+    # designer.py — read-only here, no calculation is added or changed.
+    _ctrl_girder = _dr_511.get("controlling_girder")
+    _per_girder  = _dr_511.get("per_girder", {}) or {}
+    _girder_data = _per_girder.get(_ctrl_girder, {}) or {}
+    _sls_fibre   = _girder_data.get("sls_fibre_stresses", {}) or {}
+
+    def _num3(v):
+        s = _dfmt(v, nd=3)
+        return s if s else "---"
+
+    _sls_vsls = _num3(_sls_fibre.get("V_sls_kN"))
+    _sls_aw   = _num3(_sls_fibre.get("Aw_mm2"))
+    _sls_fbc    = _num3(_sls_fibre.get("fbc_MPa"))
+    _sls_fbt    = _num3(_sls_fibre.get("fbt_MPa"))
+    _sls_taub   = _num3(_sls_fibre.get("tau_b_MPa"))
+    _sls_fecomp = _num3(_sls_fibre.get("fe_comp_MPa"))
+    _sls_fetens = _num3(_sls_fibre.get("fe_tens_MPa"))
+
+    # Equation-by-equation derivation of the governing stress: bending stress,
+    # shear stress, equivalent stress (both fibres), then the governing
+    # (max) equivalent stress that Table 5.11 reports as "Actual Stress".
+    t511_calc_content = rf"""
+        \[
+        f_{{bc}} = {_sls_fbc}\ \mathrm{{MPa}}, \qquad
+        f_{{bt}} = {_sls_fbt}\ \mathrm{{MPa}}
+        \]
+
+        \[
+        \tau_b=\frac{{V_{{sls}}}}{{A_w}}=\frac{{{_sls_vsls}\times1000}}{{{_sls_aw}}}={_sls_taub}\ \mathrm{{MPa}}
+        \qquad \text{{(average web shear stress --- Cl. 604.3.1)}}
+        \]
+
+        \[
+        f_{{e,comp}} = \sqrt{{f_{{bc}}^2 + 3\tau_b^2}}
+        = \sqrt{{{_sls_fbc}^2 + 3\times{_sls_taub}^2}}
+        = {_sls_fecomp}\ \mathrm{{MPa}}
+        \]
+
+        \[
+        f_{{e,tens}} = \sqrt{{f_{{bt}}^2 + 3\tau_b^2}}
+        = \sqrt{{{_sls_fbt}^2 + 3\times{_sls_taub}^2}}
+        = {_sls_fetens}\ \mathrm{{MPa}}
+        \]
+
+        \[
+        f_e = \max\left(f_{{e,comp}},\,f_{{e,tens}}\right) = {_steel_sig_str}
+        \qquad (\text{{Actual Stress, Table 5.10}})
+        \]
+        \smallskip
+        \hrule
+        \smallskip
+        """
+
 
     # Generate Table 5.12 rows — per-girder fatigue assessment (IRC 22 Cl. 605),
     # mirroring the Generate Results dialog: one row per girder showing the
@@ -539,6 +646,66 @@ def ch5_design_checks(checks_data, bridge) -> str:
 \hline"""
         )
     t512_content = "\n".join(t512_rows)
+    # ------------------------------------------------------------------
+    # Table 5.12 – Supporting Calculations
+    # ------------------------------------------------------------------
+
+    _fat_stress_range = _dr_511.get(KEY_SD_FATIGUE_STRESS_RANGE_MPA)
+    _fat_mu_r         = _dr_511.get(KEY_SD_FATIGUE_MU_R)
+    _fat_gamma_mft    = bridge.output_dict.get(KEY_DO_GAMMA_MF)
+    _fat_ff           = _dr_511.get(KEY_SD_FATIGUE_FF_MPA)
+    _fat_ffd          = _dr_511.get(KEY_SD_FATIGUE_FFD_MPA)
+
+    _fat_ur = (
+        (_fat_stress_range / _fat_ffd)
+        if (_fat_stress_range is not None and _fat_ffd)
+        else None
+    )
+
+    t512_calc_content = rf"""
+    \medskip
+    \noindent\textbf{{Supporting Calculations}}
+    \small
+    Illustrative fatigue calculation corresponding to the reported assessment.
+
+    \normalsize
+
+    \[
+    \Delta\sigma = {_dfmt(_fat_stress_range,2)}\ \mathrm{{MPa}}
+    \]
+
+    \[
+    f_f = {_dfmt(_fat_ff,2)}\ \mathrm{{MPa}}
+    \]
+
+    \[
+    \mu_r = {_dfmt(_fat_mu_r,2)}, \qquad
+    \gamma_{{mft}} = {_dfmt(_fat_gamma_mft,2)}
+    \]
+
+    \[
+    f_{{fd}}
+    =
+    \frac{{\mu_r\,f_f}}{{\gamma_{{mft}}}}
+    =
+    \frac{{{_dfmt(_fat_mu_r,2)}\times{_dfmt(_fat_ff,2)}}}
+        {{{_dfmt(_fat_gamma_mft,2)}}}
+    =
+    {_dfmt(_fat_ffd,2)}
+    \ \mathrm{{MPa}}
+    \]
+
+    \[
+    \mathrm{{UR}}
+    =
+    \frac{{\Delta\sigma}}{{f_{{fd}}}}
+    =
+    \frac{{{_dfmt(_fat_stress_range,2)}}}
+        {{{_dfmt(_fat_ffd,2)}}}
+    =
+    {_dfmt(_fat_ur,2)}
+    \]
+    """
 
     # Generate Table 5.13 rows — per-girder design summary, mirroring the Generate
     # Results dialog's resolve_design_results_summary: one row per girder showing
@@ -618,14 +785,97 @@ Fatigue Shear Resistance, $Q_r$ & IRC 22 Table 8 ($\phi d$, $N_{sc}$) & """
     def _sp_row(crit, req):
         return (crit + r" & " + _mm(req) + r" & " + _sc_prov_str + r" & "
                 + _defl_status(_sc_prov, req) + r" \\[6pt]")
+        
+    def _detail_row(text):
+        return (
+            r"\multicolumn{4}{|p{0.96\linewidth}|}{"
+            r"\hspace{2mm}\small "
+            + text +
+            r"} \\"
+        )
+    def _detail_value(name, value, unit=""):
+        s = _dfmt(value, nd=2)
+        return _detail_row(
+            rf"{name} = {s}" + (f" {unit}" if s else "")
+        )    
+    
 
     t515_content = (
-        _sp_row("ULS Shear (SL1)",            _dr_sc.get(KEY_SD_SC_SL1)) + "\n\\hline\n"
-        + _sp_row("Full Composite (SL2)",       _dr_sc.get(KEY_SD_SC_SL2)) + "\n\\hline\n"
-        + _sp_row("SLS Fatigue (SR)",           _dr_sc.get(KEY_SD_SC_SR)) + "\n\\hline\n"
-        + _sp_row("Max Spacing Limit (IRC 22)", _dr_sc.get("stud_spacing_max_mm")) + "\n\\hline"
-    )
+        _sp_row("ULS Shear (SL1)", _dr_sc.get(KEY_SD_SC_SL1))
+        + "\n\\hline\n"
+        + _sp_row("Full Composite (SL2)", _dr_sc.get(KEY_SD_SC_SL2))
+        + "\n\\hline\n"
+        + _sp_row("SLS Fatigue (SR)", _dr_sc.get(KEY_SD_SC_SR))
+        + "\n\\hline\n"
+        + _sp_row("Max Spacing Limit (IRC 22)", _dr_sc.get("stud_spacing_max_mm"))
+        + "\n\\hline"
+    )  
+    t515_calc_content = rf"""
+    \vspace{{0.4em}}
 
+    \noindent
+    \textbf{{Supporting Calculations}}
+
+    \begin{{flushleft}}
+    
+    % ---------------- S_L1 ----------------
+    \noindent\textbullet\hspace{{0.5em}}
+    $S_{{L1}}=\dfrac{{\sum Q_u}}{{V_L}}$
+    \hfill
+    {{\small
+    $(V_L:\ \text{{See Table 5.15; IRC 22 Cl. 606.4.1}})$
+    }}
+
+    \noindent\textbullet\hspace{{0.5em}}
+    $S_{{L2}}=\dfrac{{\sum Q_u}}{{H}}\,L$
+    \hfill
+    {{\small
+    ($L={_dfmt(_dr_sc.get(KEY_SD_SC_SHEAR_SPAN),2)}\,\mathrm{{mm}}$
+    : Shear Span)}}
+
+    \hfill
+
+
+    \hspace*{{1.5em}}
+    $H_1=\dfrac{{A_{{sl}}f_{{yk}}}}{{\gamma_m}}\times10^{{-3}}
+    ={_dfmt(_dr_sc.get(KEY_SD_SC_H1_kN),2)}\,\mathrm{{kN}}
+    \qquad
+    (A_{{sl}}={_dfmt(_dr_sc.get("Ag_mm2"),2)}\,\mathrm{{mm^2}})$
+
+    \\
+
+    \hspace*{{1.5em}}
+    $H_2=0.36\,f_{{ck}}A_{{ec}}\times10^{{-3}}
+    ={_dfmt(_dr_sc.get(KEY_SD_SC_H2_kN),2)}\,\mathrm{{kN}}
+    \qquad
+    (A_{{ec}}=b_{{eff}}\,t_{{eff}}
+    ={_dfmt(_dr_sc.get(KEY_SD_SC_AEC_MM2),2)}\,\mathrm{{mm^2}})$
+
+    \\
+
+    \hspace*{{1.5em}}
+    $H=\min(H_1,H_2)
+    ={_dfmt(_dr_sc.get(KEY_SD_SC_H_kN),2)}\,\mathrm{{kN}}$
+
+    \\
+    
+    \vspace{{0.4em}}
+
+    \noindent\textbullet\hspace{{0.5em}}$S_R=\dfrac{{\sum Q_r}}{{V_r}}$
+
+    \hspace*{{1.5em}}
+    $V_r=\dfrac{{V_R\,A_{{ec}}\,Y}}{{I_c}}$
+
+    \hspace*{{1.5em}}
+    $V_R={_dfmt(_dr_sc.get(KEY_SD_SC_Vr_kN),2)}\,\mathrm{{kN}},
+    \;
+    V_r={_dfmt(_dr_sc.get(KEY_SD_SC_VR_PER_MM),2)}\,\mathrm{{kN/mm}}$
+
+    \hfill
+    {{\small ($Y,I_c$: See Table 5.15)}}
+    \vspace{{-1.0em}}
+    \end{{flushleft}}
+    """
     # ── Table 5.16: Transverse Shear & Detailing Checks (bridge-level) ───────
     # Transverse shear (Cl.606.10): VL vs slab capacity VRd. Detailing (Cl.606.6):
     # min transverse reinforcement, stud diameter ≤ 2·tf, edge distance ≥ 25 mm.
@@ -637,9 +887,22 @@ Fatigue Shear Resistance, $Q_r$ & IRC 22 Table 8 ($\phi d$, $N_{sc}$) & """
     def _knm(v):
         s = _dfmt(v, nd=2)
         return (s + " kN/m") if s else ""
+    
+    def _mm2(v):
+        s = _dfmt(v, nd=2)
+        return (s + " mm$^2$") if s else ""
+    
+    def _mm4(v):
+        s = _dfmt(v, nd=2)
+        return (s + " mm$^4$") if s else ""
 
     _ts_vl  = _dr_sc.get(KEY_SD_TS_VL)
     _ts_vrd = _dr_sc.get(KEY_SD_TS_VRD)
+    _ts_v   = _dr_sc.get("Vu_kN")
+    _ts_aec   = _dr_sc.get(KEY_SD_TS_AEC)
+    _ts_y     = _dr_sc.get(KEY_SD_TS_Y)
+    _ts_ic    = _dr_sc.get("I_comp_short_mm4")
+    _t_slab = _dr_511.get(KEY_TS_DECK_THICKNESS)
     if _ts_vl is not None and _ts_vrd is not None:
         try:
             _ts_vl_f = float(_ts_vl)
@@ -671,10 +934,49 @@ Fatigue Shear Resistance, $Q_r$ & IRC 22 Table 8 ($\phi d$, $N_{sc}$) & """
     _d_lim    = _dr_sc.get(KEY_SD_SC_D_LIMIT)
     _edge     = _dr_sc.get(KEY_SD_SC_EDGE_DIST)
     _edge_req = _dr_sc.get(KEY_SD_SC_REQ_EDGE_DIST)
+    
+    def _row515a(parameter, expression, value,):
+        return parameter + r" & " + expression + r" & " + value + r" \\[6pt]"
 
     def _row516(check, value, status):
         return check + r" & " + value + r" & " + status + r" \\[6pt]"
+    
+    t515a_content = (
+        _row515a(
+            r"$V$",
+            r"\textnormal{Factored Shear Force, $V$}",
+            _dfmt(_ts_v, nd=2) + " kN",
+        )
+        + "\n\\hline\n"
 
+        + _row515a(
+            r"$A_{ec}$ {\small(Transformed)}",
+            r"Transformed Compressive Concrete Area, $A_{ec}=\dfrac{b_{eff}t_{eff}}{n}$",
+            _mm2(_ts_aec),
+        )
+        + "\n\\hline\n"
+
+        + _row515a(
+            r"$Y$",
+            r"\textnormal{Distance to Centroid, $Y$}",
+            _mm(_ts_y),
+        )
+        + "\n\\hline\n"
+
+        + _row515a(
+            r"$I_c$",
+            r"\textnormal{Composite Second Moment of Area, $I_c$}",
+            _mm4(_ts_ic),
+        )
+        + "\n\\hline\n"
+
+        + _row515a(
+            r"$V_L$",
+            r"$V_L=\dfrac{V\times A_{ec}\times Y}{I_c}$",
+            _dfmt(_ts_vl, nd=2) + " N/mm",
+        )
+        + "\n\\hline"
+    )
     t516_content = (
         _row516(r"\textnormal{Longitudinal Shear per unit length, $V_L$}", _knm(_ts_vl), "---") + "\n\\hline\n"
         + _row516(r"\textnormal{Transverse Shear Capacity of Slab, $V_{Rd}$}", _knm(_ts_vrd), "---") + "\n\\hline\n"
@@ -1168,6 +1470,8 @@ This section presents all structural design checks performed by OsdagBridge. For
 \hline
 """ + t511_content + r"""
 \end{longtable}
+\noindent\textit{Note: The Actual Stress above is the equivalent stress fe(IRC 22 Cl. 604.3.1) for the short-term composite section under the SLS envelope, not the bare-steel Md/Z bending stress. Since fp=0, the simplified equations below are used.}
+""" + t511_calc_content + r"""
 
 \vspace{1em}
 \begin{longtable}{|C{2.5cm}|C{3.5cm}|C{3.5cm}|>{\centering\arraybackslash}p{3.5cm}|C{2.5cm}|}
@@ -1177,7 +1481,8 @@ This section presents all structural design checks performed by OsdagBridge. For
 \hline
 """ + t512_content + r"""
 \end{longtable}
-\noindent\textit{Note: IRC 22 Cl. 605 --- governing of normal and shear fatigue (worst by DCR). Capacity reduction factor $\mu_r$ applied where plate thickness > 25 mm.}
+""" + t512_calc_content + r"""
+\noindent\textit{Note: IRC 22 Cl. 605 --- governing of normal and shear fatigue (worst by DCR). Capacity reduction factor $\mu_r$ applied where plate thickness $> 25$ mm.}
 
 \vspace{1em}
 \vspace{0.4em}
@@ -1212,7 +1517,27 @@ This section presents all structural design checks performed by OsdagBridge. For
 \hline
 """ + t515_content + r"""
 \end{longtable}
-\noindent\textit{Note: IRC 22 Cl. 606.4, 606.9. Governing spacing $= \min(S_{L1}, S_{L2}, S_R)$.}
+\noindent\textit{Note: IRC 22 Cl. 606.4, 606.9.
+Governing spacing $= \min(S_{L1}, S_{L2}, S_R)$.}
+""" + t515_calc_content + r"""
+\smallskip
+\noindent\hrulefill
+\vspace{1.2em}
+% -----------------------------
+% Table 5.15: Longitudinal Shear
+% -----------------------------
+
+\vspace{1em}
+
+\begin{longtable}{|L{3.0cm}|>{\arraybackslash}p{7.5cm}|C{4.0cm}|}
+\caption{\textbf{Longitudinal Shear Calculation (IRC 22 Cl.606.4.1)}}
+\hline
+\textbf{Parameter} &
+\textbf{Expression} &
+\textbf{Value} \\[6pt]
+\hline
+""" + t515a_content + r"""
+\end{longtable}
 
 \vspace{1em}
 \begin{longtable}{|L{5.3cm}|>{\arraybackslash}p{7.2cm}|C{2.0cm}|}

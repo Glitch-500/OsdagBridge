@@ -47,6 +47,24 @@ from osdagbridge.core.bridge_components.super_structure.median.builder import (
 from osdagbridge.core.bridge_components.super_structure.cross_bracing.builder import (
     build_cross_bracings
 )
+from osdagbridge.core.bridge_components.sub_structure.placement import (
+    calculate_substructure_placement
+)
+from osdagbridge.core.bridge_components.sub_structure.pier.builder import (
+    build_pier_geometry,
+    build_pier_rebar,
+)
+from osdagbridge.core.bridge_components.sub_structure.pier_cap.builder import (
+    build_pier_cap_geometry,
+    build_pier_cap_rebar,
+)
+from osdagbridge.core.bridge_components.foundation.pile_cap.builder import (
+    build_pile_cap_geometry,
+    build_pile_cap_rebar,
+)
+from osdagbridge.core.bridge_components.foundation.pile.builder import (
+    build_piles_geometry
+)
 
 from osdagbridge.core.bridge_types.plate_girder.dto import (
     BridgeParametersDTO,
@@ -60,6 +78,12 @@ KEY_CAD_DECK = "Deck"
 KEY_CAD_CRASH_BARRIER = "Crash Barrier"
 KEY_CAD_RAILING = "Railing"
 KEY_CAD_MEDIAN = "Median"
+KEY_CAD_PIER = "Pier"
+KEY_CAD_PIER_CAP = "Pier Cap"
+KEY_CAD_PILE_CAP = "Pile Cap"
+KEY_CAD_PILES = "Piles"
+KEY_CAD_SUBSTRUCTURE = "Substructure"
+KEY_CAD_SUBSTRUCTURE_REBAR = "Substructure Rebar"
 KEY_MODULE_PG = "Plate Girder"
 
 
@@ -255,6 +279,7 @@ class PlateGirderCADGenerator:
         self.bracing_type = design_params.bracing_type
         self.x_bracket_option = design_params.x_bracket_option
         self.k_top_bracket = design_params.k_top_bracket
+        self.output_dict = design_params.output_dict
 
         self.diagonal_section_type = design_params.diagonal_section_type
         self.diagonal_section_dims = {
@@ -284,6 +309,7 @@ class PlateGirderCADGenerator:
         self.end_diaphragm_type = design_params.end_diaphragm_type
         self.end_diaphragm_spacing = design_params.end_diaphragm_spacing
         self.end_diaphragm_bracing_type = design_params.end_diaphragm_bracing_type
+
 
         self.end_diaphragm_diagonal_section_type = design_params.end_diaphragm_diagonal_section_type
         self.end_diaphragm_diagonal_section_dims = {
@@ -700,7 +726,8 @@ class PlateGirderCADGenerator:
             # For Rolled/Welded beam diaphragms
             end_diaphragm_section=self.end_diaphragm_section,
             end_diaphragm_dims=self.end_diaphragm_dims,
-            end_diaphragm_spacing=self.end_diaphragm_spacing
+            end_diaphragm_spacing=self.end_diaphragm_spacing,
+            output_dict=self.output_dict,
         )
 
         # STEP 6: CONFIGURE CRASH BARRIER SPECIFICATIONS (IRC 5:2015)
@@ -908,6 +935,64 @@ class PlateGirderCADGenerator:
         
         supports = supports_tri + supports_cyl
 
+        # STEP 12: BUILD SUBSTRUCTURE (PIER CAP, PIER, PILE CAP, PILES)
+        substructure_placement = calculate_substructure_placement(
+            span_length_L=self.span_length_L,
+            girder_section_d=self.girder_section_d,
+            girder_section_tf_b=self.girder_section_tf_b,
+        )
+
+        pier_cap_shp = build_pier_cap_geometry(
+            length=deck_out["total_deck_width"],
+            center_x=substructure_placement["pier_cap"]["x"],
+            center_y=substructure_placement["pier_cap"]["y"],
+            bottom_z=substructure_placement["pier_cap"]["z_bot"],
+        )
+        pier_shp = build_pier_geometry(
+            center_x=substructure_placement["pier"]["x"],
+            center_y=substructure_placement["pier"]["y"],
+            bottom_z=substructure_placement["pier"]["z_bot"],
+        )
+        pile_cap_shp = build_pile_cap_geometry(
+            center_x=substructure_placement["pile_cap"]["x"],
+            center_y=substructure_placement["pile_cap"]["y"],
+            bottom_z=substructure_placement["pile_cap"]["z_bot"],
+        )
+        piles_shps = build_piles_geometry(
+            center_x=substructure_placement["x_center"],
+            center_y=substructure_placement["y_center"],
+            bottom_z=substructure_placement["z_pile_bot"],
+        )
+
+        pier_cap = [pier_cap_shp] if pier_cap_shp is not None else []
+        pier = [pier_shp] if pier_shp is not None else []
+        pile_cap = [pile_cap_shp] if pile_cap_shp is not None else []
+        piles = piles_shps if isinstance(piles_shps, list) else ([piles_shps] if piles_shps is not None else [])
+        substructure = pier_cap + pier + pile_cap + piles
+
+        pier_cap_rebar = build_pier_cap_rebar(
+            length=deck_out["total_deck_width"],
+            center_x=substructure_placement["pier_cap"]["x"],
+            center_y=substructure_placement["pier_cap"]["y"],
+            bottom_z=substructure_placement["pier_cap"]["z_bot"],
+        )
+        pier_rebar = build_pier_rebar(
+            center_x=substructure_placement["pier"]["x"],
+            center_y=substructure_placement["pier"]["y"],
+            bottom_z=substructure_placement["pier"]["z_bot"],
+        )
+        pile_cap_rebar = build_pile_cap_rebar(
+            center_x=substructure_placement["pile_cap"]["x"],
+            center_y=substructure_placement["pile_cap"]["y"],
+            bottom_z=substructure_placement["pile_cap"]["z_bot"],
+        )
+
+        substructure_rebar_shapes = []
+        for reb in (pier_cap_rebar, pier_rebar, pile_cap_rebar):
+            s = reb.get("shape")
+            if s is not None:
+                substructure_rebar_shapes.append(s)
+
         # RETURN ALL GENERATED COMPONENTS
         
         return {
@@ -956,7 +1041,19 @@ class PlateGirderCADGenerator:
             "median_w_beams": median_w_beams,
             
             # Railings
-            "railings": railings
+            "railings": railings,
+
+            # Substructure components
+            "pier_cap": pier_cap,
+            "pier": pier,
+            "pile_cap": pile_cap,
+            "piles": piles,
+            "substructure": substructure,
+            "substructure_placement": substructure_placement,
+            "pier_cap_rebar": pier_cap_rebar,
+            "pier_rebar": pier_rebar,
+            "pile_cap_rebar": pile_cap_rebar,
+            "substructure_rebar": substructure_rebar_shapes,
         }
 
     def create3Dcad(self):
@@ -1013,7 +1110,7 @@ class PlateGirderCADGenerator:
         # Collect shapes from model_data, excluding support geometry from export.
         shapes = []
         for key, v in self.model_data.items():
-            if key in {"supports", "supports_tri", "supports_cyl"}:
+            if key in {"supports", "supports_tri", "supports_cyl", "substructure", "substructure_placement", "substructure_rebar", "pier_cap_rebar", "pier_rebar", "pile_cap_rebar"}:
                 continue
             shapes.extend(_flatten(v))
 
@@ -1048,12 +1145,18 @@ class PlateGirderCADGenerator:
     def display_3dModel(self, component):
 
         hover_dict = {
-                            KEY_CAD_GIRDER: "Girder",
-                            KEY_CAD_STIFFENER: "Stiffener",
-                            KEY_CAD_DECK: "Deck",
-                            KEY_CAD_CRASH_BARRIER: "Crash Barrier",
-                            KEY_CAD_RAILING: "Railing",
-                            KEY_CAD_MEDIAN: "Median"
+            KEY_CAD_GIRDER: "Girder",
+            KEY_CAD_STIFFENER: "Stiffener",
+            KEY_CAD_DECK: "Deck",
+            KEY_CAD_CRASH_BARRIER: "Crash Barrier",
+            KEY_CAD_RAILING: "Railing",
+            KEY_CAD_MEDIAN: "Median",
+            KEY_CAD_PIER_CAP: "Pier Cap",
+            KEY_CAD_PIER: "Pier",
+            KEY_CAD_PILE_CAP: "Pile Cap",
+            KEY_CAD_PILES: "Piles",
+            KEY_CAD_SUBSTRUCTURE: "Substructure",
+            KEY_CAD_SUBSTRUCTURE_REBAR: "Substructure Rebar",
         }
 
         GIRDER_COLOR = Quantity_Color(72/255, 72/255, 54/255, Quantity_TOC_RGB)
@@ -1063,6 +1166,7 @@ class PlateGirderCADGenerator:
         BRACING_COLOR = Quantity_Color(60/255, 60/255, 60/255, Quantity_TOC_RGB)
         RAILING_COLOR = Quantity_Color(120/255, 120/255, 120/255, Quantity_TOC_RGB)
         MEDIAN_COLOR = Quantity_Color(120/255, 120/255, 120/255, Quantity_TOC_RGB)
+        SUBSTRUCTURE_COLOR = Quantity_Color(150/255, 150/255, 150/255, Quantity_TOC_RGB)
 
         self.component = component  
         
@@ -1100,6 +1204,37 @@ class PlateGirderCADGenerator:
             label = [KEY_CAD_MEDIAN, hover_dict.get(KEY_CAD_MEDIAN)]
             shapes = self.model_data["median_barriers"]
             osdag_display_shape(self.display, shapes, color=MEDIAN_COLOR, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Pier Cap":
+            label = [KEY_CAD_PIER_CAP, hover_dict.get(KEY_CAD_PIER_CAP)]
+            shapes = self.model_data.get("pier_cap", [])
+            osdag_display_shape(self.display, shapes, color=SUBSTRUCTURE_COLOR, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Pier":
+            label = [KEY_CAD_PIER, hover_dict.get(KEY_CAD_PIER)]
+            shapes = self.model_data.get("pier", [])
+            osdag_display_shape(self.display, shapes, color=SUBSTRUCTURE_COLOR, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Pile Cap":
+            label = [KEY_CAD_PILE_CAP, hover_dict.get(KEY_CAD_PILE_CAP)]
+            shapes = self.model_data.get("pile_cap", [])
+            osdag_display_shape(self.display, shapes, color=SUBSTRUCTURE_COLOR, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Piles":
+            label = [KEY_CAD_PILES, hover_dict.get(KEY_CAD_PILES)]
+            shapes = self.model_data.get("piles", [])
+            osdag_display_shape(self.display, shapes, color=SUBSTRUCTURE_COLOR, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Substructure":
+            label = [KEY_CAD_SUBSTRUCTURE, hover_dict.get(KEY_CAD_SUBSTRUCTURE)]
+            shapes = self.model_data.get("substructure", [])
+            osdag_display_shape(self.display, shapes, color=SUBSTRUCTURE_COLOR, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Substructure Rebar":
+            label = [KEY_CAD_SUBSTRUCTURE_REBAR, hover_dict.get(KEY_CAD_SUBSTRUCTURE_REBAR)]
+            shapes = self.model_data.get("substructure_rebar", [])
+            REBAR_COLOR = Quantity_Color(45/255, 45/255, 45/255, Quantity_TOC_RGB)
+            osdag_display_shape(self.display, shapes, color=REBAR_COLOR, update=True, label=label, canvas=self.cad_widget)
 
 
 def osdag_display_shape(display, shapes, material=None, texture=None, color=None, transparency=None, update=False, label=[], canvas=None):
