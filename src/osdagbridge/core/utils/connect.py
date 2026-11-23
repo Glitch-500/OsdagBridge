@@ -29,6 +29,20 @@ if sys.platform.startswith("win"):
     sys.stderr.reconfigure(encoding="utf-8", errors="ignore")
 
 from osdag_core.cli import _get_output_dictionary
+try:
+    from osdag_core.cli import _get_output_dictionary
+    from osdag_core.design_type.compression_member.compression_bolted import Compression_bolted
+    from osdag_core.design_type.compression_member.compression_welded import Compression_welded
+    from osdag_core.design_type.tension_member.tension_bolted import Tension_bolted
+    from osdag_core.design_type.tension_member.tension_welded import Tension_welded
+    _HAS_OSDAG_CORE = True
+except (ImportError, ModuleNotFoundError):
+    _HAS_OSDAG_CORE = False
+    _get_output_dictionary = None
+    Compression_bolted = None
+    Compression_welded = None
+    Tension_bolted = None
+    Tension_welded = None
 
 from osdag_core.design_type.compression_member.compression_bolted import Compression_bolted
 from osdag_core.design_type.compression_member.compression_welded import Compression_welded
@@ -65,6 +79,12 @@ def run_calculation(design_dict: Dict[str, Any], quiet: bool = True) -> Dict[str
         sys.stderr.reconfigure(encoding="utf-8", errors="ignore")
 
     with suppress_output(quiet):
+        if not _HAS_OSDAG_CORE:
+            return {
+                "design_status": False,
+                "design_error": "osdag_core not installed; skipping member connection calculation",
+            }
+
         module_name = design_dict.get("Module")
         module_class = MODULE_CLASS_MAP.get(module_name)
 
